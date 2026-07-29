@@ -1,5 +1,5 @@
 CREATE TABLE products (
-  id SERIAL PRIMARY KEY,
+  id BIGSERIAL PRIMARY KEY,
   name varchar(255) NOT NULL,
   image varchar(255) NOT NULL,
   category varchar(255) NOT NULL,
@@ -13,7 +13,7 @@ CREATE TABLE products (
 );
 
 CREATE TABLE orders (
-  id SERIAL PRIMARY KEY,
+  id BIGSERIAL PRIMARY KEY,
   payment_method varchar(255) NOT NULL,
   tax_price decimal(10,2) NOT NULL,
   shipping_price decimal(10,2) NOT NULL,
@@ -23,9 +23,9 @@ CREATE TABLE orders (
 );
 
 CREATE TABLE order_items (
-  id SERIAL PRIMARY KEY,
-  order_id int NOT NULL,
-  product_id int NOT NULL,
+  id BIGSERIAL PRIMARY KEY,
+  order_id bigint NOT NULL,
+  product_id bigint NOT NULL,
   name varchar(255) NOT NULL,
   quantity int NOT NULL,
   image varchar(255) NOT NULL,

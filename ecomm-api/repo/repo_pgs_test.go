@@ -1,314 +1,589 @@
 package repo
 
 import (
-	"context"
-	"strings"
-	"testing"
+    "context"
+    "log"
+    "os"
+    "strings"
+    "testing"
 
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/stretchr/testify/require"
-	"github.com/testcontainers/testcontainers-go/modules/postgres"
+    "github.com/jackc/pgx/v5"
+    "github.com/jackc/pgx/v5/pgxpool"
+    "github.com/stretchr/testify/require"
+    "github.com/testcontainers/testcontainers-go/modules/postgres"
 )
 
-// setupTestDB spins up a PostgreSQL container, creates the connection pool,
-// sets up the schema, and returns the pool. It registers cleanups automatically.
-func setupTestDB(t *testing.T) *pgxpool.Pool {
-	ctx := context.Background()
+var testDB *pgxpool.Pool
 
-	pgContainer, err := postgres.Run(ctx,
-		"postgres:15-alpine",
-		postgres.WithDatabase("test_db"),
-		postgres.WithUsername("postgres"),
-		postgres.WithPassword("password"),
-		postgres.BasicWaitStrategies(),
-	)
-	require.NoError(t, err, "failed to start container")
+func TestMain(m *testing.M) {
+    ctx := context.Background()
 
-	t.Cleanup(func() {
-		err := pgContainer.Terminate(ctx)
-		require.NoError(t, err, "failed to terminate container")
-	})
+    pgContainer, err := postgres.Run(ctx,
+        "postgres:15-alpine",
+        postgres.WithDatabase("test_db"),
+        postgres.WithUsername("postgres"),
+        postgres.WithPassword("password"),
+        postgres.BasicWaitStrategies(),
+    )
+    if err != nil {
+        log.Fatalf("failed to start container: %v", err)
+    }
 
-	connStr, err := pgContainer.ConnectionString(ctx, "sslmode=disable")
-	require.NoError(t, err)
+    connStr, err := pgContainer.ConnectionString(ctx, "sslmode=disable")
+    if err != nil {
+        log.Fatalf("failed to get connection string: %v", err)
+    }
 
-	db, err := pgxpool.New(ctx, connStr)
-	require.NoError(t, err, "failed to connect to the database via pgxpool")
+    connStr += "&default_query_exec_mode=exec"
 
-	t.Cleanup(func() {
-		db.Close()
-	})
+    testDB, err = pgxpool.New(ctx, connStr)
+    if err != nil {
+        log.Fatalf("failed to connect to the database via pgxpool: %v", err)
+    }
 
-	_, err = db.Exec(ctx, `
-        CREATE TABLE products (
-            id SERIAL PRIMARY KEY,
+    queries := []string{
+        `CREATE TABLE products (
+            id BIGSERIAL PRIMARY KEY,
             name varchar(255) NOT NULL,
             image varchar(255) NOT NULL,
             category varchar(255) NOT NULL,
             description text,
             rating int NOT NULL,
             num_reviews int NOT NULL DEFAULT 0,
-            price decimal(10,2) NOT NULL,
+            price float8 NOT NULL,
             count_in_stock int NOT NULL,
             created_at timestamp DEFAULT now(),
             updated_at timestamp
-        )
-    `)
-	require.NoError(t, err, "failed to create table")
+        );`,
+        `CREATE TABLE orders (
+            id BIGSERIAL PRIMARY KEY,
+            payment_method varchar(255) NOT NULL,
+            tax_price float8 NOT NULL,
+            shipping_price float8 NOT NULL,
+            total_price float8 NOT NULL,
+            created_at timestamp DEFAULT now(),
+            updated_at timestamp
+        );`,
+        `CREATE TABLE order_items (
+            id BIGSERIAL PRIMARY KEY,
+            order_id bigint NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
+            product_id bigint NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+            name varchar(255) NOT NULL,
+            quantity int NOT NULL,
+            image varchar(255) NOT NULL,
+            price float8 NOT NULL
+        );`,
+    }
 
-	return db
+    for _, query := range queries {
+        _, err = testDB.Exec(ctx, query)
+        if err != nil {
+            log.Fatalf("failed to create table: %v", err)
+        }
+    }
+
+    code := m.Run()
+
+    testDB.Close()
+    if err := pgContainer.Terminate(ctx); err != nil {
+        log.Printf("failed to terminate container: %v", err)
+    }
+
+    os.Exit(code)
 }
 
-// resetDB clears the table between test cases to ensure isolation
-func resetDB(t *testing.T, db *pgxpool.Pool) {
-	_, err := db.Exec(context.Background(), "TRUNCATE TABLE products RESTART IDENTITY CASCADE")
-	require.NoError(t, err, "failed to reset database")
+func resetDB(t *testing.T) {
+    _, err := testDB.Exec(context.Background(), "TRUNCATE TABLE products, orders, order_items RESTART IDENTITY CASCADE")
+    require.NoError(t, err, "failed to reset database")
 }
 
 func TestCreateProduct(t *testing.T) {
-	db := setupTestDB(t)
-	repo := NewPgxRepo(db)
+    repo := NewPgxRepo(testDB)
 
-	validProduct := &Product{
-		Name:         "test_product",
-		Image:        "test_image",
-		Category:     "test_category",
-		Description:  "test_description",
-		Rating:       5,
-		NumReviews:   10,
-		Price:        100.0,
-		CountInStock: 100,
-	}
+    validProduct := &Product{
+        Name:         "test_product",
+        Image:        "test_image",
+        Category:     "test_category",
+        Description:  "test_description",
+        Rating:       5,
+        NumReviews:   10,
+        Price:        100.0,
+        CountInStock: 100,
+    }
 
-	tcs := []struct {
-		name string
-		test func(*testing.T, *PgsRepo)
-	}{
-		{
-			name: "success",
-			test: func(t *testing.T, r *PgsRepo) {
-				ctx := context.Background()
-				created, err := r.CreateProduct(ctx, validProduct)
-				
-				require.NoError(t, err)
-				require.NotZero(t, created.ID)
-				require.Equal(t, validProduct.Name, created.Name)
+    tcs := []struct {
+        name string
+        test func(*testing.T, *PgsRepo)
+    }{
+        {
+            name: "success",
+            test: func(t *testing.T, r *PgsRepo) {
+                ctx := context.Background()
+                created, err := r.CreateProduct(ctx, validProduct)
 
-				// Verify it's actually in the database
-				var count int
-				err = db.QueryRow(ctx, "SELECT COUNT(*) FROM products").Scan(&count)
-				require.NoError(t, err)
-				require.Equal(t, 1, count)
-			},
-		},
-		{
-			name: "database constraint failure (missing name)",
-			test: func(t *testing.T, r *PgsRepo) {
-				ctx := context.Background()
-				invalidProduct := *validProduct
-				invalidProduct.Name = strings.Repeat("A", 256)
-				_, err := r.CreateProduct(ctx, &invalidProduct)
-				require.Error(t, err)
-			},
-		},
-	}
+                require.NoError(t, err)
+                require.NotZero(t, created.ID)
+                require.Equal(t, validProduct.Name, created.Name)
 
-	for _, tc := range tcs {
-		t.Run(tc.name, func(t *testing.T) {
-			resetDB(t, db)
-			tc.test(t, repo)
-		})
-	}
+                var count int
+                err = testDB.QueryRow(ctx, "SELECT COUNT(*) FROM products").Scan(&count)
+                require.NoError(t, err)
+                require.Equal(t, 1, count)
+            },
+        },
+        {
+            name: "database constraint failure (missing name)",
+            test: func(t *testing.T, r *PgsRepo) {
+                ctx := context.Background()
+                invalidProduct := *validProduct
+                invalidProduct.Name = strings.Repeat("A", 256)
+                _, err := r.CreateProduct(ctx, &invalidProduct)
+                require.Error(t, err)
+            },
+        },
+    }
+
+    for _, tc := range tcs {
+        t.Run(tc.name, func(t *testing.T) {
+            resetDB(t)
+            tc.test(t, repo)
+        })
+    }
 }
 
 func TestGetProduct(t *testing.T) {
-	db := setupTestDB(t)
-	repo := NewPgxRepo(db)
+    repo := NewPgxRepo(testDB)
 
-	tcs := []struct {
-		name string
-		test func(*testing.T, *PgsRepo)
-	}{
-		{
-			name: "success",
-			test: func(t *testing.T, r *PgsRepo) {
-				ctx := context.Background()
-				
-				// Setup data
-				p := &Product{Name: "P1", Image: "img", Category: "cat", Rating: 5, Price: 50, CountInStock: 10}
-				created, err := r.CreateProduct(ctx, p)
-				require.NoError(t, err)
+    tcs := []struct {
+        name string
+        test func(*testing.T, *PgsRepo)
+    }{
+        {
+            name: "success",
+            test: func(t *testing.T, r *PgsRepo) {
+                ctx := context.Background()
 
-				// Test Get
-				fetched, err := r.GetProduct(ctx, created.ID)
-				require.NoError(t, err)
-				require.Equal(t, created.ID, fetched.ID)
-				require.Equal(t, "P1", fetched.Name)
-			},
-		},
-		{
-			name: "not found",
-			test: func(t *testing.T, r *PgsRepo) {
-				ctx := context.Background()
-				
-				fetched, err := r.GetProduct(ctx, 999) // Non-existent ID
-				require.Error(t, err)
-				require.ErrorIs(t, err, pgx.ErrNoRows)
-				require.Nil(t, fetched)
-			},
-		},
-	}
+                // Setup data
+                p := &Product{Name: "P1", Image: "img", Category: "cat", Rating: 5, Price: 50, CountInStock: 10}
+                created, err := r.CreateProduct(ctx, p)
+                require.NoError(t, err)
 
-	for _, tc := range tcs {
-		t.Run(tc.name, func(t *testing.T) {
-			resetDB(t, db)
-			tc.test(t, repo)
-		})
-	}
+                // Test Get
+                fetched, err := r.GetProduct(ctx, created.ID)
+                require.NoError(t, err)
+                require.Equal(t, created.ID, fetched.ID)
+                require.Equal(t, "P1", fetched.Name)
+            },
+        },
+        {
+            name: "not found",
+            test: func(t *testing.T, r *PgsRepo) {
+                ctx := context.Background()
+
+                fetched, err := r.GetProduct(ctx, 999) // Non-existent ID
+                require.Error(t, err)
+                require.ErrorIs(t, err, pgx.ErrNoRows)
+                require.Nil(t, fetched)
+            },
+        },
+    }
+
+    for _, tc := range tcs {
+        t.Run(tc.name, func(t *testing.T) {
+            resetDB(t)
+            tc.test(t, repo)
+        })
+    }
 }
 
 func TestListProducts(t *testing.T) {
-	db := setupTestDB(t)
-	repo := NewPgxRepo(db)
+    repo := NewPgxRepo(testDB)
 
-	tcs := []struct {
-		name string
-		test func(*testing.T, *PgsRepo)
-	}{
-		{
-			name: "success",
-			test: func(t *testing.T, r *PgsRepo) {
-				ctx := context.Background()
-				
-				// Setup data
-				r.CreateProduct(ctx, &Product{Name: "P1", Image: "img", Category: "cat", Rating: 5, Price: 50, CountInStock: 10})
-				r.CreateProduct(ctx, &Product{Name: "P2", Image: "img", Category: "cat", Rating: 4, Price: 60, CountInStock: 20})
+    tcs := []struct {
+        name string
+        test func(*testing.T, *PgsRepo)
+    }{
+        {
+            name: "success",
+            test: func(t *testing.T, r *PgsRepo) {
+                ctx := context.Background()
 
-				products, err := r.ListProducts(ctx)
-				require.NoError(t, err)
-				require.NotNil(t, products)
-				require.Len(t, *products, 2)
-			},
-		},
-		{
-			name: "empty list",
-			test: func(t *testing.T, r *PgsRepo) {
-				ctx := context.Background()
-				
-				products, err := r.ListProducts(ctx)
-				require.NoError(t, err)
-				require.NotNil(t, products)
-				require.Len(t, *products, 0)
-			},
-		},
-	}
+                // Setup data
+                r.CreateProduct(ctx, &Product{Name: "P1", Image: "img", Category: "cat", Rating: 5, Price: 50, CountInStock: 10})
+                r.CreateProduct(ctx, &Product{Name: "P2", Image: "img", Category: "cat", Rating: 4, Price: 60, CountInStock: 20})
 
-	for _, tc := range tcs {
-		t.Run(tc.name, func(t *testing.T) {
-			resetDB(t, db)
-			tc.test(t, repo)
-		})
-	}
+                products, err := r.ListProducts(ctx)
+                require.NoError(t, err)
+                require.NotNil(t, products)
+                require.Len(t, *products, 2)
+            },
+        },
+        {
+            name: "empty list",
+            test: func(t *testing.T, r *PgsRepo) {
+                ctx := context.Background()
+
+                products, err := r.ListProducts(ctx)
+                require.NoError(t, err)
+                require.NotNil(t, products)
+                require.Len(t, *products, 0)
+            },
+        },
+    }
+
+    for _, tc := range tcs {
+        t.Run(tc.name, func(t *testing.T) {
+            resetDB(t)
+            tc.test(t, repo)
+        })
+    }
 }
 
 func TestUpdateProduct(t *testing.T) {
-	db := setupTestDB(t)
-	repo := NewPgxRepo(db)
+    repo := NewPgxRepo(testDB)
 
-	tcs := []struct {
-		name string
-		test func(*testing.T, *PgsRepo)
-	}{
-		{
-			name: "success",
-			test: func(t *testing.T, r *PgsRepo) {
-				ctx := context.Background()
-				
-				// Setup data
-				p := &Product{Name: "Old", Image: "img", Category: "cat", Rating: 5, Price: 50, CountInStock: 11}
-				created, err := r.CreateProduct(ctx, p)
-				require.NoError(t, err)
+    tcs := []struct {
+        name string
+        test func(*testing.T, *PgsRepo)
+    }{
+        {
+            name: "success",
+            test: func(t *testing.T, r *PgsRepo) {
+                ctx := context.Background()
 
-				// Update data
-				created.Name = "Updated"
-				created.Price = 99.99
+                // Setup data
+                p := &Product{Name: "Old", Image: "img", Category: "cat", Rating: 5, Price: 50, CountInStock: 11}
+                created, err := r.CreateProduct(ctx, p)
+                require.NoError(t, err)
 
-				updated, err := r.UpdateProduct(ctx, created)
-				require.NoError(t, err)
-				require.NotNil(t, updated)
-				require.Equal(t, "Updated", updated.Name)
-				require.Equal(t, float64(99.99), updated.Price)
-			},
-		},
-		{
-			name: "not found",
-			test: func(t *testing.T, r *PgsRepo) {
-				ctx := context.Background()
-				
-				p := &Product{ID: 999, Name: "Non-existent", Image: "img", Category: "cat"}
-				updated, err := r.UpdateProduct(ctx, p)
-				
-				require.Error(t, err)
-				require.ErrorIs(t, err, pgx.ErrNoRows) // CollectOneRow returns this on empty result set
-				require.Nil(t, updated)
-			},
-		},
-	}
+                // Update data
+                created.Name = "Updated"
+                created.Price = 99.99
 
-	for _, tc := range tcs {
-		t.Run(tc.name, func(t *testing.T) {
-			resetDB(t, db)
-			tc.test(t, repo)
-		})
-	}
+                updated, err := r.UpdateProduct(ctx, created)
+                require.NoError(t, err)
+                require.NotNil(t, updated)
+                require.Equal(t, "Updated", updated.Name)
+                require.Equal(t, float64(99.99), updated.Price)
+            },
+        },
+        {
+            name: "not found",
+            test: func(t *testing.T, r *PgsRepo) {
+                ctx := context.Background()
+
+                p := &Product{ID: 999, Name: "Non-existent", Image: "img", Category: "cat"}
+                updated, err := r.UpdateProduct(ctx, p)
+
+                require.Error(t, err)
+                require.ErrorIs(t, err, pgx.ErrNoRows)
+                require.Nil(t, updated)
+            },
+        },
+    }
+
+    for _, tc := range tcs {
+        t.Run(tc.name, func(t *testing.T) {
+            resetDB(t)
+            tc.test(t, repo)
+        })
+    }
 }
 
 func TestDeleteProduct(t *testing.T) {
-	db := setupTestDB(t)
-	repo := NewPgxRepo(db)
+    repo := NewPgxRepo(testDB)
 
-	tcs := []struct {
-		name string
-		test func(*testing.T, *PgsRepo)
-	}{
-		{
-			name: "success",
-			test: func(t *testing.T, r *PgsRepo) {
-				ctx := context.Background()
-				
-				// Setup data
-				p := &Product{Name: "To Delete", Image: "img", Category: "cat", Rating: 5, Price: 50, CountInStock: 10}
-				created, err := r.CreateProduct(ctx, p)
-				require.NoError(t, err)
+    tcs := []struct {
+        name string
+        test func(*testing.T, *PgsRepo)
+    }{
+        {
+            name: "success",
+            test: func(t *testing.T, r *PgsRepo) {
+                ctx := context.Background()
 
-				// Delete
-				err = r.DeleteProduct(ctx, created.ID)
-				require.NoError(t, err)
+                // Setup data
+                p := &Product{Name: "To Delete", Image: "img", Category: "cat", Rating: 5, Price: 50, CountInStock: 10}
+                created, err := r.CreateProduct(ctx, p)
+                require.NoError(t, err)
 
-				// Verify
-				var count int
-				err = db.QueryRow(ctx, "SELECT COUNT(*) FROM products WHERE id=$1", created.ID).Scan(&count)
-				require.NoError(t, err)
-				require.Equal(t, 0, count)
-			},
-		},
-		{
-			name: "not found",
-			test: func(t *testing.T, r *PgsRepo) {
-				ctx := context.Background()
-				
-				err := r.DeleteProduct(ctx, 999)
-				require.Error(t, err)
-				require.ErrorIs(t, err, pgx.ErrNoRows)
-			},
-		},
-	}
+                // Delete
+                err = r.DeleteProduct(ctx, created.ID)
+                require.NoError(t, err)
 
-	for _, tc := range tcs {
-		t.Run(tc.name, func(t *testing.T) {
-			resetDB(t, db)
-			tc.test(t, repo)
-		})
-	}
+                // Verify
+                var count int
+                err = testDB.QueryRow(ctx, "SELECT COUNT(*) FROM products WHERE id=$1", created.ID).Scan(&count)
+                require.NoError(t, err)
+                require.Equal(t, 0, count)
+            },
+        },
+        {
+            name: "not found",
+            test: func(t *testing.T, r *PgsRepo) {
+                ctx := context.Background()
+
+                err := r.DeleteProduct(ctx, 999)
+                require.Error(t, err)
+                require.ErrorIs(t, err, pgx.ErrNoRows)
+            },
+        },
+    }
+
+    for _, tc := range tcs {
+        t.Run(tc.name, func(t *testing.T) {
+            resetDB(t)
+            tc.test(t, repo)
+        })
+    }
+}
+
+func TestCreateOrder(t *testing.T) {
+    repo := NewPgxRepo(testDB)
+
+    validOrder := &Order{
+        PaymentMethod: "test payment method",
+        TaxPrice:      10.0,
+        ShippingPrice: 20.0,
+        TotalPrice:    129.99,
+        Items: []OrderItem{
+            {
+                Name:      "test product",
+                Quantity:  1,
+                Image:     "test.jpg",
+                Price:     99.99,
+                ProductId: 1,
+            },
+            {
+                Name:      "test product 2",
+                Quantity:  2,
+                Image:     "test2.jpg",
+                Price:     199.99,
+                ProductId: 2,
+            },
+        },
+    }
+
+    tcs := []struct {
+        name string
+        test func(*testing.T, *PgsRepo)
+    }{
+        {
+            name: "success",
+            test: func(t *testing.T, r *PgsRepo) {
+                ctx := context.Background()
+                
+                r.CreateProduct(ctx, &Product{Name: "test product", Price: 99.99, CountInStock: 10})
+                r.CreateProduct(ctx, &Product{Name: "test product 2", Price: 199.99, CountInStock: 10})
+
+                created, err := r.CreateOrder(ctx, validOrder)
+
+                require.NoError(t, err)
+                require.NotZero(t, created.ID)
+                require.Equal(t, validOrder.PaymentMethod, created.PaymentMethod)
+                require.Len(t, created.Items, 2)
+
+                // Verify order in the database
+                var count int
+                err = testDB.QueryRow(ctx, "SELECT COUNT(*) FROM orders WHERE id=$1", created.ID).Scan(&count)
+                require.NoError(t, err)
+                require.Equal(t, 1, count)
+
+                // Verify order_items in the database
+                err = testDB.QueryRow(ctx, "SELECT COUNT(*) FROM order_items WHERE order_id=$1", created.ID).Scan(&count)
+                require.NoError(t, err)
+                require.Equal(t, 2, count)
+            },
+        },
+        {
+            name: "database constraint failure (missing payment method)",
+            test: func(t *testing.T, r *PgsRepo) {
+                ctx := context.Background()
+                invalidOrder := *validOrder
+                invalidOrder.PaymentMethod = strings.Repeat("A", 256) 
+
+                _, err := r.CreateOrder(ctx, &invalidOrder)
+                require.Error(t, err)
+            },
+        },
+    }
+
+    for _, tc := range tcs {
+        t.Run(tc.name, func(t *testing.T) {
+            resetDB(t)
+            tc.test(t, repo)
+        })
+    }
+}
+
+func TestGetOrder(t *testing.T) {
+    repo := NewPgxRepo(testDB)
+
+    tcs := []struct {
+        name string
+        test func(*testing.T, *PgsRepo)
+    }{
+        {
+            name: "success",
+            test: func(t *testing.T, r *PgsRepo) {
+                ctx := context.Background()
+
+                r.CreateProduct(ctx, &Product{Name: "Item 1", Price: 50, CountInStock: 10})
+                r.CreateProduct(ctx, &Product{Name: "Item 2", Price: 39.99, CountInStock: 10})
+
+                // Setup data
+                o := &Order{
+                    PaymentMethod: "test payment method",
+                    TaxPrice:      10.0,
+                    ShippingPrice: 20.0,
+                    TotalPrice:    129.99,
+                    Items: []OrderItem{
+                        {Name: "Item 1", Quantity: 1, Image: "img1", Price: 50, ProductId: 1},
+                        {Name: "Item 2", Quantity: 2, Image: "img2", Price: 39.99, ProductId: 2},
+                    },
+                }
+                created, err := r.CreateOrder(ctx, o)
+                require.NoError(t, err)
+
+                // Test Get
+                fetched, err := r.GetOrder(ctx, created.ID)
+                require.NoError(t, err)
+                require.NotNil(t, fetched)
+                require.Equal(t, created.ID, fetched.ID)
+                require.Equal(t, o.PaymentMethod, fetched.PaymentMethod)
+                require.Len(t, fetched.Items, 2)
+            },
+        },
+        {
+            name: "not found",
+            test: func(t *testing.T, r *PgsRepo) {
+                ctx := context.Background()
+
+                fetched, err := r.GetOrder(ctx, 999) // Non-existent ID
+                require.Error(t, err)
+                require.ErrorIs(t, err, pgx.ErrNoRows)
+                require.Nil(t, fetched)
+            },
+        },
+    }
+
+    for _, tc := range tcs {
+        t.Run(tc.name, func(t *testing.T) {
+            resetDB(t)
+            tc.test(t, repo)
+        })
+    }
+}
+
+func TestListOrders(t *testing.T) {
+    repo := NewPgxRepo(testDB)
+
+    tcs := []struct {
+        name string
+        test func(*testing.T, *PgsRepo)
+    }{
+        {
+            name: "success",
+            test: func(t *testing.T, r *PgsRepo) {
+                ctx := context.Background()
+
+                r.CreateProduct(ctx, &Product{Name: "1", Price: 10, CountInStock: 10})
+                r.CreateProduct(ctx, &Product{Name: "2", Price: 20, CountInStock: 10})
+
+                // Setup data
+                o1 := &Order{PaymentMethod: "method 1", TotalPrice: 10, Items: []OrderItem{{Name: "1", Price: 10, ProductId: 1}}}
+                o2 := &Order{PaymentMethod: "method 2", TotalPrice: 20, Items: []OrderItem{{Name: "2", Price: 20, ProductId: 2}}}
+
+                _, err := r.CreateOrder(ctx, o1)
+                require.NoError(t, err)
+
+                _, err = r.CreateOrder(ctx, o2)
+                require.NoError(t, err)
+
+                orders, err := r.ListOrders(ctx)
+                require.NoError(t, err)
+                require.NotNil(t, orders)
+                require.Len(t, orders, 2)
+            },
+        },
+        {
+            name: "empty list",
+            test: func(t *testing.T, r *PgsRepo) {
+                ctx := context.Background()
+
+                orders, err := r.ListOrders(ctx)
+                require.NoError(t, err)
+                require.NotNil(t, orders)
+                require.Len(t, orders, 0)
+            },
+        },
+    }
+
+    for _, tc := range tcs {
+        t.Run(tc.name, func(t *testing.T) {
+            resetDB(t)
+            tc.test(t, repo)
+        })
+    }
+}
+
+func TestDeleteOrder(t *testing.T) {
+    repo := NewPgxRepo(testDB)
+
+    tcs := []struct {
+        name string
+        test func(*testing.T, *PgsRepo)
+    }{
+        {
+            name: "success",
+            test: func(t *testing.T, r *PgsRepo) {
+                ctx := context.Background()
+
+                r.CreateProduct(ctx, &Product{Name: "Item 1", Price: 100, CountInStock: 10})
+
+                // Setup data
+                o := &Order{
+                    PaymentMethod: "test method",
+                    TotalPrice:    100,
+                    Items: []OrderItem{
+                        {Name: "Item 1", Price: 100, ProductId: 1},
+                    },
+                }
+                created, err := r.CreateOrder(ctx, o)
+                require.NoError(t, err)
+
+                // Delete
+                err = r.DeleteOrder(ctx, created.ID)
+                require.NoError(t, err)
+
+                // Verify Order is deleted
+                var count int
+                err = testDB.QueryRow(ctx, "SELECT COUNT(*) FROM orders WHERE id=$1", created.ID).Scan(&count)
+                require.NoError(t, err)
+                require.Equal(t, 0, count)
+
+                // Verify cascading delete on OrderItems
+                err = testDB.QueryRow(ctx, "SELECT COUNT(*) FROM order_items WHERE order_id=$1", created.ID).Scan(&count)
+                require.NoError(t, err)
+                require.Equal(t, 0, count)
+            },
+        },
+        {
+            name: "not found",
+            test: func(t *testing.T, r *PgsRepo) {
+                ctx := context.Background()
+
+                err := r.DeleteOrder(ctx, 999)
+                require.Error(t, err)
+                require.ErrorIs(t, err, pgx.ErrNoRows)
+            },
+        },
+    }
+
+    for _, tc := range tcs {
+        t.Run(tc.name, func(t *testing.T) {
+            resetDB(t)
+            tc.test(t, repo)
+        })
+    }
 }
