@@ -8,8 +8,8 @@ CREATE TABLE products (
   num_reviews int NOT NULL DEFAULT 0,
   price decimal(10,2) NOT NULL,
   count_in_stock int NOT NULL,
-  created_at timestamp DEFAULT now(),
-  updated_at timestamp
+  created_at timestamptz DEFAULT now(),
+  updated_at timestamptz
 );
 
 CREATE TABLE orders (
@@ -18,8 +18,8 @@ CREATE TABLE orders (
   tax_price decimal(10,2) NOT NULL,
   shipping_price decimal(10,2) NOT NULL,
   total_price decimal(10,2) NOT NULL,
-  created_at timestamp DEFAULT now(),
-  updated_at timestamp
+  created_at timestamptz DEFAULT now(),
+  updated_at timestamptz
 );
 
 CREATE TABLE order_items (
@@ -29,7 +29,7 @@ CREATE TABLE order_items (
   name varchar(255) NOT NULL,
   quantity int NOT NULL,
   image varchar(255) NOT NULL,
-  price int NOT NULL
+  price decimal(10,2) NOT NULL
 );
 
 ALTER TABLE order_items ADD FOREIGN KEY (order_id) REFERENCES orders (id);

@@ -215,7 +215,7 @@ func TestListProducts(t *testing.T) {
                 products, err := r.ListProducts(ctx)
                 require.NoError(t, err)
                 require.NotNil(t, products)
-                require.Len(t, *products, 2)
+                require.Len(t, products, 2)
             },
         },
         {
@@ -226,7 +226,7 @@ func TestListProducts(t *testing.T) {
                 products, err := r.ListProducts(ctx)
                 require.NoError(t, err)
                 require.NotNil(t, products)
-                require.Len(t, *products, 0)
+                require.Len(t, products, 0)
             },
         },
     }

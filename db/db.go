@@ -3,8 +3,11 @@ package db
 import (
 	"context"
 	"fmt"
+	"log"
+	"os"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/joho/godotenv"
 )
 
 type Database struct{
@@ -12,8 +15,15 @@ type Database struct{
 }
 
 func NewDatabase() (*Database,error){
+	if err:=godotenv.Load();err!=nil{
+		_=godotenv.Load("../../.env")
+	}
+	dbURL:=os.Getenv("DB_URL")
+	if dbURL == "" {
+		log.Fatal("DB_URL is not set in environment variables")
+	}
 	ctx:=context.Background()
-	connStr:="postgres://postgres:password@localhost:5433/ecomm?sslmode=disable"
+	connStr:=dbURL
 	db,err:=pgxpool.New(ctx,connStr)
 	if err!=nil{
 		return nil,fmt.Errorf("error opening database: %v",err)
