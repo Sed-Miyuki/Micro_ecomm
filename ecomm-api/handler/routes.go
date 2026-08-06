@@ -19,6 +19,7 @@ func RegisterRoutes(handler *handler) *chi.Mux{
 			r.Delete("/",handler.deleteProduct)
 		})
 	})
+
 	r.Route("/orders",func(r chi.Router) {
 		r.Post("/",handler.createOrder)
 		r.Get("/",handler.listOrders)
@@ -27,6 +28,30 @@ func RegisterRoutes(handler *handler) *chi.Mux{
 			r.Delete("/",handler.deleteOrder)
 		})
 	})
+
+	r.Route("/users",func(r chi.Router) {
+		r.Post("/",handler.createUser)
+		r.Get("/",handler.listUsers)
+		r.Patch("/",handler.updateUser)
+		r.Route("/{id}",func(r chi.Router) {
+			r.Delete("/",handler.deleteUser)
+		})
+		r.Route("/login",func(r chi.Router) {
+			r.Post("/",handler.loginUser)
+		})
+		r.Route("/logout",func(r chi.Router) {
+			r.Post("/",handler.LogoutUser)
+		})
+	})
+
+	r.Route("/tokens",func(r chi.Router) {
+		r.Route("/renew",func(r chi.Router) {
+			r.Post("/",handler.RenewAccessToken)
+		})
+		r.Route("/revoke/{id}",func(r chi.Router) {
+			r.Post("/",handler.RevokeSession)
+		})
+	}) 
 	return r
 }
 

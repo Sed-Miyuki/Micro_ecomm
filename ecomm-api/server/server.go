@@ -49,3 +49,39 @@ func (s *Server) ListOrders(ctx context.Context) ([]repo.Order,error){
 func (s *Server) DeleteOrder(ctx context.Context,id int64) error{
 	return s.pgs.DeleteOrder(ctx,id)
 }
+
+func (s *Server) CreateUser(ctx context.Context,u *repo.User) (*repo.User,error){
+	return s.pgs.CreateUser(ctx,u)
+}
+
+func (s *Server) GetUser(ctx context.Context,email string) (*repo.User,error){
+	return s.pgs.GetUser(ctx,email)
+}
+
+func (s *Server) ListUsers(ctx context.Context) ([]repo.User,error){
+	return s.pgs.ListUsers(ctx)
+}
+
+func (s *Server) UpdateUser(ctx context.Context,u *repo.User) (*repo.User,error){
+	return s.pgs.UpdateUser(ctx,u)
+}
+
+func (s *Server) DeleteUser(ctx context.Context,id int64) error{
+	return s.pgs.DeleteUser(ctx,id)
+}
+
+func (s *Server) CreateSession(ctx context.Context,se *repo.Session) (*repo.Session,error){
+	return s.pgs.CreateSession(ctx,se)
+}
+
+func (s *Server) GetSession(ctx context.Context,id string) (*repo.Session,error){
+	return s.pgs.GetSession(ctx,id)
+}
+
+func (s *Server) RevokeSession(ctx context.Context,id string) error{
+	return s.pgs.RevokeSession(ctx,id)
+}
+
+func (s *Server) DeleteSession(ctx context.Context,id string) error{
+	return s.pgs.DeleteSession(ctx,id)
+}

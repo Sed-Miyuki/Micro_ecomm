@@ -32,13 +32,13 @@ func (pgs *PgsRepo) GetProduct(ctx context.Context, id int64) (*Product, error) 
 	          FROM products WHERE id=$1`
 	res, err := pgs.db.Query(ctx, query, id)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("error getting product: %w", err)
 	}
-	defer res.Close() 
+	defer res.Close()
 
 	p, err = pgx.CollectOneRow(res, pgx.RowToStructByName[Product])
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("error getting product row: %w", err)
 	}
 	return &p, nil
 }
@@ -47,13 +47,13 @@ func (pgs *PgsRepo) ListProducts(ctx context.Context) ([]Product, error) {
 	query := "SELECT id, name, image, category, description, rating, num_reviews, price, count_in_stock, created_at, updated_at FROM products"
 	res, err := pgs.db.Query(ctx, query)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("error getting products: %w", err)
 	}
 	defer res.Close()
 
 	p, err := pgx.CollectRows(res, pgx.RowToStructByName[Product])
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("error inserting products rows: %w", err)
 	}
 	return p, nil
 }
@@ -73,13 +73,13 @@ func (pgs *PgsRepo) UpdateProduct(ctx context.Context, p *Product) (*Product, er
 		p.ID,
 	)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("error updating product: %w", err)
 	}
-	defer rows.Close() 
+	defer rows.Close()
 
 	updatedProduct, err := pgx.CollectOneRow(rows, pgx.RowToStructByName[Product])
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("error updating product row: %w", err)
 	}
 	return &updatedProduct, nil
 }
@@ -88,7 +88,7 @@ func (pgs *PgsRepo) DeleteProduct(ctx context.Context, id int64) error {
 	query := "DELETE FROM products WHERE id=$1"
 	res, err := pgs.db.Exec(ctx, query, id)
 	if err != nil {
-		return err
+		return fmt.Errorf("error deleting product: %w", err)
 	}
 	if res.RowsAffected() == 0 {
 		return pgx.ErrNoRows
@@ -142,7 +142,7 @@ func (pgs *PgsRepo) GetOrder(ctx context.Context, id int64) (*Order, error) {
 	if err != nil {
 		return nil, fmt.Errorf("error getting order: %w", err)
 	}
-	defer res.Close() // 💡 Connection leak patched
+	defer res.Close() 
 
 	o, err := pgx.CollectOneRow(res, pgx.RowToStructByName[Order])
 	if err != nil {
@@ -192,7 +192,7 @@ func (pgs *PgsRepo) ListOrders(ctx context.Context) ([]Order, error) {
 	if err != nil {
 		return nil, fmt.Errorf("error querying order items: %w", err)
 	}
-	defer resi.Close() 
+	defer resi.Close()
 
 	items, err := pgx.CollectRows(resi, pgx.RowToStructByName[OrderItem])
 	if err != nil {
@@ -210,7 +210,7 @@ func (pgs *PgsRepo) ListOrders(ctx context.Context) ([]Order, error) {
 func (pgs *PgsRepo) DeleteOrder(ctx context.Context, id int64) error {
 	return pgs.execTx(ctx, func(tx pgx.Tx) error {
 		query := "DELETE FROM order_items WHERE order_id=$1"
-		_, err := tx.Exec(ctx, query, id) 
+		_, err := tx.Exec(ctx, query, id)
 		if err != nil {
 			return fmt.Errorf("error deleting order items: %w", err)
 		}
@@ -221,10 +221,117 @@ func (pgs *PgsRepo) DeleteOrder(ctx context.Context, id int64) error {
 			return fmt.Errorf("error deleting orders: %w", err)
 		}
 		if tag.RowsAffected() == 0 {
-			return pgx.ErrNoRows 
+			return pgx.ErrNoRows
 		}
 		return nil
 	})
+}
+
+func (pgs *PgsRepo) CreateUser(ctx context.Context,u *User) (*User,error){
+	query:="INSERT INTO users (name,email,password,is_admin) VALUES($1,$2,$3,$4) RETURNING id,created_at,updated_at"
+	err:=pgs.db.QueryRow(ctx,query,u.Name,u.Email,u.Password,u.IsAdmin).Scan(&u.ID,&u.CreatedAt,&u.UpdatedAt)
+	if err!=nil{
+		return nil,fmt.Errorf("error creating user: %w",err)
+	}
+	return u,nil
+}
+
+func (pgs *PgsRepo) GetUser(ctx context.Context,email string) (*User,error){
+	var u User
+	query:="SELECT id,name,email,password,is_admin,created_at,updated_at FROM users WHERE email=$1"
+	res,err:=pgs.db.Query(ctx,query,email)
+	if err!=nil{
+		return nil,fmt.Errorf("error getting user: %w",err)
+	}
+	defer res.Close()
+	u,err=pgx.CollectOneRow(res,pgx.RowToStructByName[User])
+	if err!=nil{
+		return nil,fmt.Errorf("error collecting user row: %w",err)
+	}
+	return &u,nil
+}
+
+func (pgs *PgsRepo) ListUsers(ctx context.Context) ([]User,error){
+	query:="SELECT id,name,email,password,is_admin,created_at,updated_at FROM users"
+	res,err:=pgs.db.Query(ctx,query)
+	if err!=nil{
+		return nil,fmt.Errorf("error getting users: %w",err)
+	}
+	defer res.Close()
+	u,err:=pgx.CollectRows(res,pgx.RowToStructByName[User])
+	if err!=nil{
+		return nil,fmt.Errorf("error collecting users row: %w",err)
+	}
+	return u,nil
+}
+
+func (pgs *PgsRepo) UpdateUser(ctx context.Context,u *User) (*User,error){
+	query:="UPDATE users SET name=$1,email=$2,password=$3,is_admin=$4,created_at=$5,updated_at=$6 WHERE id=$7 RETURNING id,name,email,password,is_admin,created_at,updated_at"
+	res,err:=pgs.db.Query(ctx,query,u.Name,u.Email,u.Password,u.IsAdmin,u.CreatedAt,u.UpdatedAt,u.ID)
+	if err!=nil{
+		return nil,fmt.Errorf("error updating user: %w",err)
+	}
+	defer res.Close()
+	updated_user,err:=pgx.CollectOneRow(res,pgx.RowToStructByName[User])
+	if err!=nil{
+		return nil,fmt.Errorf("error updating user row: %w",err)
+	}
+	return &updated_user,nil
+}
+
+func (pgs *PgsRepo) DeleteUser(ctx context.Context,id int64) error{
+	query:="DELETE FROM users WHERE id=$1"
+	res,err:=pgs.db.Exec(ctx,query,id)
+	if err!=nil{
+		return fmt.Errorf("error deleting user: %w",err)
+	}
+	if res.RowsAffected()==0{
+		return pgx.ErrNoRows
+	}
+	return nil
+}
+
+
+func (pgs *PgsRepo)	CreateSession(ctx context.Context,s *Session) (*Session,error){
+	query:="INSERT INTO sessions (id,user_email,refresh_token,is_revoked,expires_at) VALUES ($1,$2,$3,$4,$5)"
+	_,err:=pgs.db.Exec(ctx,query,s.ID,s.UserEmail,s.RefreshToken,s.IsRevoked,s.ExpiresAt)
+	if err!=nil{
+		return nil,fmt.Errorf("error creating session: %w",err)
+	}
+	return s,nil
+}
+
+func (pgs *PgsRepo) GetSession(ctx context.Context,id string) (*Session,error){
+	var s Session
+	query:="SELECT id,user_email,is_revoked,refresh_token,expires_at,created_at FROM sessions WHERE id=$1"
+	res,err:=pgs.db.Query(ctx,query,id)
+	if err!=nil{
+		return nil,fmt.Errorf("error getting session: %w",err)
+	}
+	defer res.Close()
+	s,err=pgx.CollectOneRow(res,pgx.RowToStructByName[Session])
+	if err!=nil{
+		return nil,fmt.Errorf("error getting session row: %w",err)
+	}
+	return &s,nil
+}
+
+func (pgs *PgsRepo) RevokeSession(ctx context.Context,id string) error{
+	query:="UPDATE sessions SET is_revoked=TRUE WHERE id=$1"
+	_,err:=pgs.db.Exec(ctx,query,id)
+	if err!=nil{
+		return fmt.Errorf("error revoking session %w",err)
+	}
+	return nil
+}
+
+func (pgs *PgsRepo) DeleteSession(ctx context.Context,id string) error{
+	query:="DELETE FROM sessions WHERE id=$1"
+	_,err:=pgs.db.Exec(ctx,query,id)
+	if err!=nil{
+		return fmt.Errorf("error deleting session :%w",err)
+	}
+	return nil
 }
 
 func (pgs *PgsRepo) execTx(ctx context.Context, fn func(pgx.Tx) error) (err error) {
