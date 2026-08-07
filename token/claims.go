@@ -11,7 +11,7 @@ import (
 type UserClaims struct{
 	ID				int64		`json:"id"`
 	Email			string		`json:"email"`
-	IsAdmin			bool		`josn:"is_admin"`
+	IsAdmin			bool		`json:"is_admin"`
 	jwt.RegisteredClaims
 }
 

@@ -119,8 +119,8 @@ func (pgs *PgsRepo) CreateOrder(ctx context.Context, o *Order) (*Order, error) {
 }
 
 func createOrder(ctx context.Context, tx pgx.Tx, o *Order) (*Order, error) {
-	query := "INSERT INTO orders(payment_method,tax_price,shipping_price,total_price) VALUES($1,$2,$3,$4) RETURNING id, created_at, updated_at;"
-	err := tx.QueryRow(ctx, query, o.PaymentMethod, o.TaxPrice, o.ShippingPrice, o.TotalPrice).Scan(&o.ID, &o.CreatedAt, &o.UpdatedAt)
+	query := "INSERT INTO orders(payment_method,tax_price,shipping_price,total_price,user_id) VALUES($1,$2,$3,$4,$5) RETURNING id, created_at, updated_at;"
+	err := tx.QueryRow(ctx, query, o.PaymentMethod, o.TaxPrice, o.ShippingPrice, o.TotalPrice,o.UserID).Scan(&o.ID, &o.CreatedAt, &o.UpdatedAt)
 	if err != nil {
 		return nil, fmt.Errorf("failed to insert order: %w", err)
 	}
@@ -136,9 +136,9 @@ func createOrderItem(ctx context.Context, tx pgx.Tx, oi *OrderItem) (*OrderItem,
 	return oi, nil
 }
 
-func (pgs *PgsRepo) GetOrder(ctx context.Context, id int64) (*Order, error) {
-	query := "SELECT id, payment_method, tax_price, shipping_price, total_price, created_at, updated_at FROM orders WHERE id=$1"
-	res, err := pgs.db.Query(ctx, query, id)
+func (pgs *PgsRepo) GetOrder(ctx context.Context, userID int64) (*Order, error) {
+	query := "SELECT id, user_id, payment_method, tax_price, shipping_price, total_price, created_at, updated_at FROM orders WHERE user_id=$1"
+	res, err := pgs.db.Query(ctx, query, userID)
 	if err != nil {
 		return nil, fmt.Errorf("error getting order: %w", err)
 	}
@@ -150,7 +150,7 @@ func (pgs *PgsRepo) GetOrder(ctx context.Context, id int64) (*Order, error) {
 	}
 
 	query = "SELECT id, name, quantity, image, price, product_id, order_id FROM order_items WHERE order_id=$1"
-	resi, err := pgs.db.Query(ctx, query, id)
+	resi, err := pgs.db.Query(ctx, query, o.ID)
 	if err != nil {
 		return nil, fmt.Errorf("error querying order items: %w", err)
 	}
@@ -165,7 +165,7 @@ func (pgs *PgsRepo) GetOrder(ctx context.Context, id int64) (*Order, error) {
 }
 
 func (pgs *PgsRepo) ListOrders(ctx context.Context) ([]Order, error) {
-	query := "SELECT id, payment_method, tax_price, shipping_price, total_price, created_at, updated_at FROM orders"
+	query := "SELECT id,user_id, payment_method, tax_price, shipping_price, total_price, created_at, updated_at FROM orders"
 	res, err := pgs.db.Query(ctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("error getting orders: %w", err)
@@ -266,8 +266,8 @@ func (pgs *PgsRepo) ListUsers(ctx context.Context) ([]User,error){
 }
 
 func (pgs *PgsRepo) UpdateUser(ctx context.Context,u *User) (*User,error){
-	query:="UPDATE users SET name=$1,email=$2,password=$3,is_admin=$4,created_at=$5,updated_at=$6 WHERE id=$7 RETURNING id,name,email,password,is_admin,created_at,updated_at"
-	res,err:=pgs.db.Query(ctx,query,u.Name,u.Email,u.Password,u.IsAdmin,u.CreatedAt,u.UpdatedAt,u.ID)
+	query:="UPDATE users SET name=$1,email=$2,password=$3,is_admin=$4,updated_at=$5 WHERE id=$6 RETURNING id,name,email,password,is_admin,created_at,updated_at"
+	res,err:=pgs.db.Query(ctx,query,u.Name,u.Email,u.Password,u.IsAdmin,u.UpdatedAt,u.ID)
 	if err!=nil{
 		return nil,fmt.Errorf("error updating user: %w",err)
 	}
@@ -293,8 +293,8 @@ func (pgs *PgsRepo) DeleteUser(ctx context.Context,id int64) error{
 
 
 func (pgs *PgsRepo)	CreateSession(ctx context.Context,s *Session) (*Session,error){
-	query:="INSERT INTO sessions (id,user_email,refresh_token,is_revoked,expires_at) VALUES ($1,$2,$3,$4,$5)"
-	_,err:=pgs.db.Exec(ctx,query,s.ID,s.UserEmail,s.RefreshToken,s.IsRevoked,s.ExpiresAt)
+	query:="INSERT INTO sessions (id,user_email,refresh_token,is_revoked,expires_at) VALUES ($1,$2,$3,$4,$5) RETURNING created_at"
+	err:=pgs.db.QueryRow(ctx,query,s.ID,s.UserEmail,s.RefreshToken,s.IsRevoked,s.ExpiresAt).Scan(&s.CreatedAt)
 	if err!=nil{
 		return nil,fmt.Errorf("error creating session: %w",err)
 	}
