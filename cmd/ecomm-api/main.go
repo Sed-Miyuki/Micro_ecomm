@@ -4,23 +4,16 @@ import (
 	"log"
 	"os"
 
-	"github.com/Sed-Miyuki/Micro_ecomm/db"
 	"github.com/Sed-Miyuki/Micro_ecomm/ecomm-api/handler"
-	"github.com/Sed-Miyuki/Micro_ecomm/ecomm-api/repo"
-	"github.com/Sed-Miyuki/Micro_ecomm/ecomm-api/server"
+	"github.com/Sed-Miyuki/Micro_ecomm/ecomm-grpc/pb"
 	"github.com/joho/godotenv"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 )
 
 const minSecretKeySize=32
 
 func main(){
-	db,err:=db.NewDatabase()
-	if err!=nil{
-		log.Fatalf("error opening database: %v",err)
-	}
-	defer db.Close()
-	log.Println("successfully connected to database")
-
 	if err:=godotenv.Load();err!=nil{
 		_=godotenv.Load("../../.env")
 	}
@@ -32,9 +25,24 @@ func main(){
 		log.Fatalf("secret_key must be atleast %d characters",minSecretKeySize)
 	}
 
-	pgs:=repo.NewPgxRepo(db.GetDB())
-	srv:=server.NewServer(pgs)
-	hdl:=handler.NewHandler(srv,secretKey)
+	scvAddr:=os.Getenv("SCV_ADDR")
+	if scvAddr == "" {
+		log.Fatal("Service address is not set in environment variables")
+	}
+
+	opts:=[]grpc.DialOption{
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+	}
+
+	conn,err:=grpc.NewClient(scvAddr,opts...)
+	if err!=nil{
+		log.Fatalf("failed to connect to server: %v",err)
+	}
+	defer conn.Close()
+
+	client:=pb.NewEcommClient(conn)
+
+	hdl:=handler.NewHandler(client,secretKey)
 	handler.RegisterRoutes(hdl)
 	handler.Start(":8080")
 }

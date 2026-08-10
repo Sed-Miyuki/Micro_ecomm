@@ -1,2 +1,5 @@
 .env
 test_all_endpoints.sh
+TODO.md
+ecomm-api/handler/endpoints_test.go
+ecomm-api/handler/handler_test.go
