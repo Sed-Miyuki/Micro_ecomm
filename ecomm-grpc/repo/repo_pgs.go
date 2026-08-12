@@ -3,9 +3,14 @@ package repo
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+)
+
+const(
+	maxAttempts=3
 )
 
 type PgsRepo struct {
@@ -103,7 +108,7 @@ func (pgs *PgsRepo) CreateOrder(ctx context.Context, o *Order) (*Order, error) {
 			return err
 		}
 		for i := range o.Items {
-			o.Items[i].OrderId = o.ID
+			o.Items[i].OrderID = o.ID
 			_, err := createOrderItem(ctx, tx, &o.Items[i])
 			if err != nil {
 				return err
@@ -128,7 +133,7 @@ func createOrder(ctx context.Context, tx pgx.Tx, o *Order) (*Order, error) {
 
 func createOrderItem(ctx context.Context, tx pgx.Tx, oi *OrderItem) (*OrderItem, error) {
 	query := "INSERT INTO order_items(name,quantity,image,price,product_id,order_id) VALUES($1,$2,$3,$4,$5,$6) RETURNING id;"
-	err := tx.QueryRow(ctx, query, oi.Name, oi.Quantity, oi.Image, oi.Price, oi.ProductID, oi.OrderId).Scan(&oi.ID)
+	err := tx.QueryRow(ctx, query, oi.Name, oi.Quantity, oi.Image, oi.Price, oi.ProductID, oi.OrderID).Scan(&oi.ID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to insert order_item: %w", err)
 	}
@@ -136,7 +141,7 @@ func createOrderItem(ctx context.Context, tx pgx.Tx, oi *OrderItem) (*OrderItem,
 }
 
 func (pgs *PgsRepo) GetOrder(ctx context.Context, userID int64) (*Order, error) {
-	query := "SELECT id, user_id, payment_method, tax_price, shipping_price, total_price, created_at, updated_at FROM orders WHERE user_id=$1 ORDER BY created_at DESC LIMIT 1"
+	query := "SELECT id, user_id, payment_method, tax_price, shipping_price, total_price, created_at, updated_at, status FROM orders WHERE user_id=$1 ORDER BY created_at DESC LIMIT 1"
 	res, err := pgs.db.Query(ctx, query, userID)
 	if err != nil {
 		return nil, fmt.Errorf("error getting order: %w", err)
@@ -163,8 +168,36 @@ func (pgs *PgsRepo) GetOrder(ctx context.Context, userID int64) (*Order, error) 
 	return &o, nil
 }
 
+func (pgs *PgsRepo) GetOrderStatusByID(ctx context.Context,id int64) (*Order,error){
+	query := "SELECT id, user_id, payment_method, tax_price, shipping_price, total_price, created_at, updated_at, status FROM orders WHERE id=$1 ORDER BY created_at DESC LIMIT 1"
+	res, err := pgs.db.Query(ctx, query, id)
+	if err != nil {
+		return nil, fmt.Errorf("error getting order: %w", err)
+	}
+	defer res.Close()
+
+	o, err := pgx.CollectOneRow(res, pgx.RowToStructByName[Order])
+	if err != nil {
+		return nil, fmt.Errorf("error collecting order row: %w", err)
+	}
+
+	query = "SELECT id, name, quantity, image, price, product_id, order_id FROM order_items WHERE order_id=$1"
+	resi, err := pgs.db.Query(ctx, query, o.ID)
+	if err != nil {
+		return nil, fmt.Errorf("error querying order items: %w", err)
+	}
+	defer resi.Close()
+
+	items, err := pgx.CollectRows(resi, pgx.RowToStructByName[OrderItem])
+	if err != nil {
+		return nil, fmt.Errorf("error collecting order_item rows: %w", err)
+	}
+	o.Items = items
+	return &o, nil
+}
+
 func (pgs *PgsRepo) ListOrders(ctx context.Context) ([]*Order, error) {
-	query := "SELECT id,user_id, payment_method, tax_price, shipping_price, total_price, created_at, updated_at FROM orders"
+	query := "SELECT id,user_id, payment_method, tax_price, shipping_price, total_price,status, created_at, updated_at FROM orders"
 	res, err := pgs.db.Query(ctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("error getting orders: %w", err)
@@ -199,11 +232,30 @@ func (pgs *PgsRepo) ListOrders(ctx context.Context) ([]*Order, error) {
 	}
 
 	for _, item := range items {
-		if parentOrder, exists := orderMap[item.OrderId]; exists {
+		if parentOrder, exists := orderMap[item.OrderID]; exists {
 			parentOrder.Items = append(parentOrder.Items, item)
 		}
 	}
 	return orders, nil
+}
+
+func (pgs *PgsRepo) UpdateOrderStatus(ctx context.Context,o *Order) (*Order,error){
+	query := `
+		UPDATE orders 
+		SET status = $1, updated_at = NOW() 
+		WHERE id = $2
+		RETURNING id, user_id, payment_method, tax_price, shipping_price, total_price, status, created_at, updated_at`
+	
+	rows, err := pgs.db.Query(ctx, query, o.Status, o.ID)
+	if err != nil {
+		return nil, fmt.Errorf("error updating order status: %w", err)
+	}
+	defer rows.Close()
+	updatedOrder, err := pgx.CollectOneRow(rows, pgx.RowToStructByName[Order])
+	if err != nil {
+		return nil, fmt.Errorf("error collecting updated order: %w", err)
+	}
+	return &updatedOrder, nil
 }
 
 func (pgs *PgsRepo) DeleteOrder(ctx context.Context, id int64) error {
@@ -353,4 +405,168 @@ func (pgs *PgsRepo) execTx(ctx context.Context, fn func(pgx.Tx) error) (err erro
 		return fmt.Errorf("error committing transaction: %w", commitErr)
 	}
 	return nil
+}
+
+func insertNotificationState(ctx context.Context,tx pgx.Tx,es *NotificationState) (*NotificationState,error){
+	query:="INSERT INTO notification_states (order_id,state,message) VALUES ($1,$2,$3) RETURNING id,requested_at,completed_at"
+	err:=tx.QueryRow(ctx,query,es.OrderID,es.State,es.Message).Scan(&es.ID,&es.RequestedAt,&es.CompletedAt)
+	if err!=nil{
+		return nil,fmt.Errorf("error inserting into notification table: %w",err)
+	}
+	return es,nil
+}
+
+func insertNotificationEvent(ctx context.Context,tx pgx.Tx,u *NotificationEvent) (*NotificationEvent,error){
+	query:="INSERT INTO notification_events_queue (user_email,order_status,order_id,state_id,attempts) VALUES ($1,$2,$3,$4,$5) RETURNING id,created_at,updated_at"
+	err:=tx.QueryRow(ctx,query,u.UserEmail,u.OrderStatus,u.OrderID,u.StateID,u.Attempts).Scan(&u.ID,&u.CreatedAt,&u.UpdatedAt)
+	if err!=nil{
+		return nil,fmt.Errorf("error inserting into notification_events_queue table: %w",err)
+	}
+	return u,nil
+}
+
+func (pgs *PgsRepo) EnqueueNotificationEvent(ctx context.Context,ne *NotificationEvent) (*NotificationEvent,error){
+	var ev *NotificationEvent
+	err:=pgs.execTx(ctx,func(tx pgx.Tx) error {
+		ns,err:=insertNotificationState(ctx,tx,&NotificationState{
+			OrderID: ne.OrderID,
+			State: NotSent,
+			Message: "",
+		})
+		if err!=nil{
+			return fmt.Errorf("error inserting notification state: %w",err)
+		}
+		ne.StateID=ns.ID
+		ev,err=insertNotificationEvent(ctx,tx,ne)
+		if err!=nil{
+			return fmt.Errorf("error inserting notification event: %w",err)
+		}
+		return nil
+	})
+	if err!=nil{
+		return nil,fmt.Errorf("error enqueuing notification event: %w",err)
+	}
+	return ev,nil
+}
+
+func (pgs *PgsRepo) ListNotificationEvents(ctx context.Context) ([]*NotificationEvent,error){
+	var events []*NotificationEvent
+	query:="SELECT id,user_email,order_status,order_id,state_id,attempts,created_at,updated_at FROM notification_events_queue WHERE attempts<$1 ORDER BY created_at"
+	res,err:=pgs.db.Query(ctx,query,maxAttempts)
+	if err!=nil{
+		return nil,fmt.Errorf("error getting notification events: %w",err)
+	}
+	rows,err:=pgx.CollectRows(res,pgx.RowToAddrOfStructByName[NotificationEvent])
+	if err!=nil{
+		return nil,fmt.Errorf("error getting notification events rows: %w",err)
+	}
+	for _,i:=range rows{
+		events = append(events, i)
+	}
+	return events,nil
+}
+
+func getNotificationEventAttempts(ctx context.Context,tx pgx.Tx,id int64) (*NotificationEvent,error){
+	query:="SELECT id,attempts FROM notification_events_queue WHERE id=$1"
+	res,err:=tx.Query(ctx,query,id)
+	if err!=nil{
+		return nil,fmt.Errorf("error getting notification event: %w",err)
+	}
+	ne,err:=pgx.CollectOneRow(res,pgx.RowToAddrOfStructByNameLax[NotificationEvent])
+	if err!=nil{
+		return nil,fmt.Errorf("error getting notification event row: %w",err)
+	}
+	return ne,nil
+}
+
+func updateNotificationEventAttempts(ctx context.Context,tx pgx.Tx,u *NotificationEvent) (*NotificationEvent,error){
+	query:="UPDATE notification_events_queue SET attempts=$1,updated_at=NOW() WHERE id=$2 RETURNING updated_at"
+	err:=tx.QueryRow(ctx,query,u.Attempts,u.ID).Scan(&u.UpdatedAt)
+	if err!=nil{
+		return nil,fmt.Errorf("error updating notification event attempt: %w",err)
+	}
+	return u,nil
+}
+
+func deleteNotificationEvent(ctx context.Context,tx pgx.Tx,id int64) error{
+	query:="DELETE FROM notification_events_queue WHERE id=$1"
+	_,err:=tx.Exec(ctx,query,id)
+	if err!=nil{
+		return fmt.Errorf("error deleting notification event: %w",err)
+	}
+	return nil
+}
+
+func updateNotificationState(ctx context.Context,tx pgx.Tx,es *NotificationState) error{
+	if es.State==Sent{
+		t:=time.Now()
+		es.CompletedAt=&t
+		query:="UPDATE notification_states SET state=$1,message=$2,completed_at=$3 WHERE id=$4"
+		_,err:=tx.Exec(ctx,query,es.State,es.Message,es.CompletedAt,es.ID)
+		if err!=nil{
+			return fmt.Errorf("error updating notification")
+		}
+		return nil
+	}else{
+		query:="UPDATE notification_states SET state=$1,message=$2 WHERE id=$3"
+		_,err:=tx.Exec(ctx,query,es.State,es.Message,es.ID)
+		if err!=nil{
+			return fmt.Errorf("error updating notification")
+		}
+		return nil
+	}
+}
+
+func (pgs *PgsRepo) UpdateNotificationEvent(ctx context.Context,ev *NotificationEvent,es *NotificationState,responseType NotificationResponseType) (bool,error){
+	succeeded:=false
+	err:=pgs.execTx(ctx,func(tx pgx.Tx) error {
+		switch responseType{
+		case NotificationSucess:
+			err:=updateNotificationState(ctx,tx,&NotificationState{
+				ID: ev.StateID,
+				State: Sent,
+				Message: es.Message,
+			})
+			if err!=nil{
+				return fmt.Errorf("error updating notification state: %w",err)
+			}
+			err=deleteNotificationEvent(ctx,tx,ev.ID)
+			if err!=nil{
+				return fmt.Errorf("error deleting notification event: %w",err)
+			}
+			succeeded=true
+		case NotificationFailure:
+			u,err:=getNotificationEventAttempts(ctx,tx,ev.ID)
+			if err!=nil{
+				return fmt.Errorf("error getting notification event: %w",err)
+			}
+			if u.Attempts+1<maxAttempts{
+				t:=time.Now()
+				u.UpdatedAt=&t
+				u.Attempts+=1
+
+				_,err:=updateNotificationEventAttempts(ctx,tx,u)
+				if err!=nil{
+					return fmt.Errorf("error updating notification event: %w",err)
+				}
+			}else{
+				err=updateNotificationState(ctx,tx,&NotificationState{
+					ID: ev.StateID,
+					State: Failed,
+					Message: es.Message,
+				})
+				if err!=nil{
+					return fmt.Errorf("error updating notification state: %w",err)
+				}
+				err=deleteNotificationEvent(ctx,tx,u.ID)
+				if err!=nil{
+					return fmt.Errorf("error deleting notification event: %w",err)
+				}
+			}
+		default:
+			return fmt.Errorf("invalid notification response type: %v",responseType)
+		}
+		return nil
+	})
+	return succeeded,err
 }

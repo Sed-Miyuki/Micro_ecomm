@@ -1,6 +1,8 @@
 package handler
 
 import (
+	"fmt"
+	"strings"
 	"time"
 
 	"github.com/Sed-Miyuki/Micro_ecomm/ecomm-grpc/pb"
@@ -69,6 +71,27 @@ func toPBOrderItems(oi []*OrderItem) []*pb.OrderItem {
 	return res
 }
 
+type OrderStatus string 
+
+const(
+	Pending 	OrderStatus="pending"
+	Shipped		OrderStatus="shipped"
+	Delivered	OrderStatus="delivered"
+)
+
+func toPBOrderStatus(s OrderStatus) (pb.OrderStatus,error){
+	switch s{
+	case Pending:
+		return pb.OrderStatus_PENDING,nil
+	case Shipped:
+		return pb.OrderStatus_SHIPPED,nil
+	case Delivered:
+		return pb.OrderStatus_DELIVERED,nil
+	default:
+		return 0,fmt.Errorf("unknown order status: %s",s)
+	}
+}
+
 func toOrderRes(o *pb.OrderRes) OrderRes {
 	return OrderRes{
 		ID:            o.Id,
@@ -77,6 +100,7 @@ func toOrderRes(o *pb.OrderRes) OrderRes {
 		ShippingPrice: o.ShippingPrice,
 		TotalPrice:    o.TotalPrice,
 		Items:         toOrderItems(o.Items),
+		Status:        strings.ToLower(o.GetStatus().String()),
 		CreatedAt:     o.CreatedAt.AsTime(),
 		UpdatedAt:     toTimePtr(o.UpdatedAt),
 	}

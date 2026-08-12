@@ -3,6 +3,8 @@ package server
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strings"
 
 	"github.com/Sed-Miyuki/Micro_ecomm/ecomm-grpc/pb"
 	"github.com/Sed-Miyuki/Micro_ecomm/ecomm-grpc/repo"
@@ -95,6 +97,17 @@ func (s *Server) CreateOrder(ctx context.Context, o *pb.OrderReq) (*pb.OrderRes,
 	if err != nil {
 		return nil, err
 	}
+	order.Status=repo.Pending
+
+	_,err=s.repo.EnqueueNotificationEvent(ctx,&repo.NotificationEvent{
+		UserEmail: o.GetUserEmail(),
+		OrderStatus: order.Status,
+		OrderID: order.ID,
+		Attempts: 0,
+	})
+	if err!=nil{
+		return nil,err
+	}
 
 	return toPBOrderRes(order), nil
 }
@@ -122,6 +135,39 @@ func (s *Server) ListOrders(ctx context.Context, o *pb.OrderReq) (*pb.ListOrderR
 	return &pb.ListOrderRes{
 		Orders: lor,
 	}, nil
+}
+
+func (s *Server) UpdateOrderStatus(ctx context.Context,o *pb.OrderReq) (*pb.OrderRes,error){
+	order,err:=s.repo.GetOrderStatusByID(ctx,o.GetId())
+	if err!=nil{
+		return nil,err
+	}
+	
+	if o.GetUserId()!=order.UserID{
+		return nil,fmt.Errorf("Order %d doesn't belong to the user %d",o.GetId(),o.GetUserId())
+	}
+
+	rOrderStatus:=repo.OrderStatus(strings.ToLower(o.GetStatus().String()))
+	if rOrderStatus==order.Status{
+		return nil,fmt.Errorf("Order status is already %s",order.Status)
+	}
+	order.Status=rOrderStatus
+	or,err:=s.repo.UpdateOrderStatus(ctx,order)
+	if err!=nil{
+		return nil,err
+	}
+
+	_,err=s.repo.EnqueueNotificationEvent(ctx,&repo.NotificationEvent{
+		UserEmail: o.GetUserEmail(),
+		OrderStatus: order.Status,
+		OrderID: order.ID,
+		Attempts: 0,
+	})
+	if err!=nil{
+		return nil,err
+	}
+
+	return toPBOrderRes(or),nil
 }
 
 func (s *Server) DeleteOrder(ctx context.Context, o *pb.OrderReq) (*pb.OrderRes, error) {
@@ -243,4 +289,54 @@ func (s *Server) DeleteSession(ctx context.Context, sr *pb.SessionReq) (*pb.Sess
 	}
 
 	return &pb.SessionRes{}, nil
+}
+
+func (s *Server) ListNotificationEvents(ctx context.Context, lnr *pb.ListNotificationEventsReq) (*pb.ListNotificationEventsRes,error){
+	notificationEvents,err:=s.repo.ListNotificationEvents(ctx)
+	if err!=nil{
+		return nil,err
+	}
+
+	lners:=make([]*pb.NotificationEvent,0,len(notificationEvents))
+	for _,ne:=range notificationEvents{
+		lners=append(lners, &pb.NotificationEvent{
+			Id: ne.ID,
+			UserEmail: ne.UserEmail,
+			OrderStatus: toPBOrderStatus(ne.OrderStatus),
+			OrderId: ne.OrderID,
+			StateId: ne.StateID,
+			Attempts: ne.Attempts,
+		})
+	}
+	return &pb.ListNotificationEventsRes{
+		Events: lners,
+	},nil
+}
+
+func (s *Server) UpdateNotificationEvent(ctx context.Context,unr *pb.UpdateNotificationEventReq) (*pb.UpdateNotificationEventRes,error){
+	var resposeType repo.NotificationResponseType
+	switch unr.ResponseType{
+	case pb.NotificationResponseType_SUCCESS:
+		resposeType=repo.NotificationSucess
+	case pb.NotificationResponseType_FAILURE:
+		resposeType=repo.NotificationFailure
+	default:
+		return nil,fmt.Errorf("invalid response type: %v",unr.ResponseType)
+	}
+
+	succeeded,err:=s.repo.UpdateNotificationEvent(ctx,
+		&repo.NotificationEvent{
+			ID: unr.GetId(),
+			StateID: unr.GetStateId(),
+		},
+		&repo.NotificationState{
+			Message: unr.GetMessage(),
+		},
+		resposeType)
+	if err!=nil{
+		return nil,err
+	}
+	return &pb.UpdateNotificationEventRes{
+		Succeeded: succeeded,
+	},nil
 }

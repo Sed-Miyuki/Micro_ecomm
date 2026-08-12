@@ -99,6 +99,19 @@ func torepoOrderItems(items []*pb.OrderItem) []repo.OrderItem {
 	return res
 }
 
+func toPBOrderStatus(os repo.OrderStatus) pb.OrderStatus {
+	switch os {
+	case repo.Pending:
+		return pb.OrderStatus_PENDING
+	case repo.Shipped:
+		return pb.OrderStatus_SHIPPED
+	case repo.Delivered:
+		return pb.OrderStatus_DELIVERED
+	default:
+		return 0
+	}
+}
+
 func toPBOrderRes(o *repo.Order) *pb.OrderRes {
 	res := &pb.OrderRes{
 		Id:            o.ID,
@@ -107,6 +120,7 @@ func toPBOrderRes(o *repo.Order) *pb.OrderRes {
 		TaxPrice:      o.TaxPrice,
 		ShippingPrice: o.ShippingPrice,
 		TotalPrice:    o.TotalPrice,
+		Status: 	   toPBOrderStatus(o.Status),
 		CreatedAt:     timestamppb.New(o.CreatedAt),
 	}
 	if o.UpdatedAt != nil {

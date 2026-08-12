@@ -16,6 +16,13 @@ type Product struct{
 	UpdatedAt		*time.Time		`db:"updated_at"`
 }
 
+type OrderStatus string
+const(
+	Pending		OrderStatus="pending"
+	Shipped		OrderStatus="shipped"
+	Delivered	OrderStatus="delivered"
+)
+
 type Order struct{
 	ID				int64			`db:"id"`
 	PaymentMethod	string			`db:"payment_method"`
@@ -23,6 +30,7 @@ type Order struct{
 	ShippingPrice	float32			`db:"shipping_price"`
 	TotalPrice		float32			`db:"total_price"`
 	UserID			int64 			`db:"user_id"`
+	Status			OrderStatus		`db:"status"`
 	CreatedAt		time.Time		`db:"created_at"`
 	UpdatedAt		*time.Time		`db:"updated_at"`
 	Items			[]OrderItem		`db:"-"`
@@ -35,7 +43,7 @@ type OrderItem struct{
 	Image 			string			`db:"image"`
 	Price			float32			`db:"price"`
 	ProductID		int64			`db:"product_id"`
-	OrderId			int64			`db:"order_id"`
+	OrderID			int64			`db:"order_id"`
 }
 
 type User struct{
@@ -55,4 +63,39 @@ type Session struct{
 	IsRevoked		bool			`db:"is_revoked"`
 	CreatedAt		time.Time		`db:"created_at"`
 	ExpiresAt		time.Time		`db:"expires_at"`
+}
+
+type NotificationEventState string
+
+const (
+	NotSent NotificationEventState = "not sent"
+	Sent    NotificationEventState = "sent"
+	Failed  NotificationEventState = "failed"
+)
+
+type NotificationResponseType string
+
+const (
+	NotificationSucess  NotificationResponseType = "success"
+	NotificationFailure NotificationResponseType = "failure"
+)
+
+type NotificationState struct {
+	ID          int64                  `db:"id"`
+	OrderID     int64                  `db:"order_id"`
+	State       NotificationEventState `db:"state"`
+	Message     string                 `db:"message"`
+	RequestedAt time.Time              `db:"requested_at"`
+	CompletedAt *time.Time             `db:"completed_at"`
+}
+
+type NotificationEvent struct {
+	ID          int64       `db:"id"`
+	UserEmail   string      `db:"user_email"`
+	OrderStatus OrderStatus `db:"order_status"`
+	OrderID     int64       `db:"order_id"`
+	StateID     int64       `db:"state_id"`
+	Attempts    int64       `db:"attempts"`
+	CreatedAt   time.Time   `db:"created_at"`
+	UpdatedAt   *time.Time  `db:"updated_at"`
 }
