@@ -181,10 +181,12 @@ func (h *handler) updateOrderStatus(w http.ResponseWriter,r *http.Request){
 	var o OrderReq
 	if err:=json.NewDecoder(r.Body).Decode(&o);err!=nil{
 		http.Error(w,"error decoding request body",http.StatusBadRequest)
+		return
 	}
 	status,err:=toPBOrderStatus(OrderStatus(o.Status))
 	if err!=nil{
 		http.Error(w,"invalid status",http.StatusBadRequest)
+		return
 	}
 	res,err:=h.client.UpdateOrderStatus(h.ctx,&pb.OrderReq{
 		Id: o.ID,
@@ -194,6 +196,7 @@ func (h *handler) updateOrderStatus(w http.ResponseWriter,r *http.Request){
 	})
 	if err!=nil{
 		http.Error(w,"failed to update order status",http.StatusInternalServerError)
+		return
 	}
 	w.Header().Set("Content-Type","application/json")
 	json.NewEncoder(w).Encode(res)

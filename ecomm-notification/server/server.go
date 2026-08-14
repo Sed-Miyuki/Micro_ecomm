@@ -71,9 +71,7 @@ func (s *Server) processNotificationEvents(ctx context.Context) error{
 		}(ev)
 	}
 
-	go func ()  {
-		wg.Wait()
-	}()
+	wg.Wait()
 	return nil
 }
 

@@ -302,6 +302,22 @@ func (pgs *PgsRepo) GetUser(ctx context.Context, email string) (*User, error) {
 	return &u, nil
 }
 
+func (pgs *PgsRepo) GetUserByID(ctx context.Context, id int64) (*User, error) {
+	var u User
+	query := "SELECT id,name,email,password,is_admin,created_at,updated_at FROM users WHERE id=$1"
+	res, err := pgs.db.Query(ctx, query, id)
+	if err != nil {
+		return nil, fmt.Errorf("error getting user: %w", err)
+	}
+	defer res.Close()
+	u, err = pgx.CollectOneRow(res, pgx.RowToStructByName[User])
+	if err != nil {
+		return nil, fmt.Errorf("error collecting user row: %w", err)
+	}
+	return &u, nil
+}
+
+
 func (pgs *PgsRepo) ListUsers(ctx context.Context) ([]*User, error) {
 	query := "SELECT id,name,email,password,is_admin,created_at,updated_at FROM users"
 	res, err := pgs.db.Query(ctx, query)
@@ -456,6 +472,7 @@ func (pgs *PgsRepo) ListNotificationEvents(ctx context.Context) ([]*Notification
 	if err!=nil{
 		return nil,fmt.Errorf("error getting notification events: %w",err)
 	}
+	defer res.Close()
 	rows,err:=pgx.CollectRows(res,pgx.RowToAddrOfStructByName[NotificationEvent])
 	if err!=nil{
 		return nil,fmt.Errorf("error getting notification events rows: %w",err)
@@ -472,6 +489,7 @@ func getNotificationEventAttempts(ctx context.Context,tx pgx.Tx,id int64) (*Noti
 	if err!=nil{
 		return nil,fmt.Errorf("error getting notification event: %w",err)
 	}
+	defer res.Close()
 	ne,err:=pgx.CollectOneRow(res,pgx.RowToAddrOfStructByNameLax[NotificationEvent])
 	if err!=nil{
 		return nil,fmt.Errorf("error getting notification event row: %w",err)
@@ -504,14 +522,14 @@ func updateNotificationState(ctx context.Context,tx pgx.Tx,es *NotificationState
 		query:="UPDATE notification_states SET state=$1,message=$2,completed_at=$3 WHERE id=$4"
 		_,err:=tx.Exec(ctx,query,es.State,es.Message,es.CompletedAt,es.ID)
 		if err!=nil{
-			return fmt.Errorf("error updating notification")
+			return fmt.Errorf("error updating notification: %w",err)
 		}
 		return nil
 	}else{
 		query:="UPDATE notification_states SET state=$1,message=$2 WHERE id=$3"
 		_,err:=tx.Exec(ctx,query,es.State,es.Message,es.ID)
 		if err!=nil{
-			return fmt.Errorf("error updating notification")
+			return fmt.Errorf("error updating notification: %w",err)
 		}
 		return nil
 	}

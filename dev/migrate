@@ -1,0 +1,23 @@
+#!/bin/bash
+set -e
+
+# Source the .env file to get your credentials
+set -a
+source .env
+set +a
+
+DB_DSN="postgres://postgres:${POSTGRES_PASSWORD}@host.docker.internal:5433/${POSTGRES_DB}?sslmode=disable"
+
+docker_cmd=(
+  docker run -it --rm \
+  --add-host host.docker.internal:host-gateway \
+  --volume "$(pwd)/db:/db" \
+  migrate/migrate:v4.18.2
+)
+
+if [ "${1:-}" == "create" ]; then
+    shift
+    exec "${docker_cmd[@]}" create -ext sql -dir /db/migrations "$@"
+fi
+
+exec "${docker_cmd[@]}" -path=/db/migrations -database "$DB_DSN" "$@"

@@ -142,9 +142,10 @@ func (s *Server) UpdateOrderStatus(ctx context.Context,o *pb.OrderReq) (*pb.Orde
 	if err!=nil{
 		return nil,err
 	}
-	
-	if o.GetUserId()!=order.UserID{
-		return nil,fmt.Errorf("Order %d doesn't belong to the user %d",o.GetId(),o.GetUserId())
+
+	owner, err := s.repo.GetUserByID(ctx, order.UserID)
+	if err != nil {
+		return nil, err
 	}
 
 	rOrderStatus:=repo.OrderStatus(strings.ToLower(o.GetStatus().String()))
@@ -158,10 +159,10 @@ func (s *Server) UpdateOrderStatus(ctx context.Context,o *pb.OrderReq) (*pb.Orde
 	}
 
 	_,err=s.repo.EnqueueNotificationEvent(ctx,&repo.NotificationEvent{
-		UserEmail: o.GetUserEmail(),
+		UserEmail:   owner.Email,  
 		OrderStatus: order.Status,
-		OrderID: order.ID,
-		Attempts: 0,
+		OrderID:     order.ID,
+		Attempts:    0,
 	})
 	if err!=nil{
 		return nil,err
@@ -169,6 +170,7 @@ func (s *Server) UpdateOrderStatus(ctx context.Context,o *pb.OrderReq) (*pb.Orde
 
 	return toPBOrderRes(or),nil
 }
+
 
 func (s *Server) DeleteOrder(ctx context.Context, o *pb.OrderReq) (*pb.OrderRes, error) {
 	err := s.repo.DeleteOrder(ctx, o.GetId())

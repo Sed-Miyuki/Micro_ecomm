@@ -18,7 +18,7 @@ CREATE TABLE notification_events_queue(
     attempts        INT,
     created_at      timestamptz                 DEFAULT NOW(),
     updated_at      timestamptz
-)
+);
 
 ALTER TABLE notification_states
     ADD CONSTRAINT notification_states_order_id_fk 

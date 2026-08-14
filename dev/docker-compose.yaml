@@ -1,0 +1,58 @@
+networks:
+  ecomm:
+    driver: bridge
+
+services:
+  postgres:
+    networks:
+      - ecomm
+    platform: linux/amd64
+    image: postgres:15-alpine
+    ports:
+      - "5433:5432"
+    env_file:
+      - ../.env # Automatically pulls POSTGRES_PASSWORD and POSTGRES_DB
+
+  ecomm-grpc:
+    networks:
+      - ecomm
+    hostname: ecomm-grpc
+    platform: linux/amd64
+    image: sed_miyuki_test/ecomm:latest
+    command: "/bin/ecomm-grpc"
+    ports:
+      - "9091:9091"
+    env_file:
+      - ../.env
+    depends_on:
+      - postgres
+
+  ecomm-api:
+    networks:
+      - ecomm
+    hostname: ecomm-api
+    platform: linux/amd64
+    image: sed_miyuki_test/ecomm:latest
+    command: "/bin/ecomm-api"
+    ports:
+      - "8080:8080"
+    env_file:
+      - ../.env
+    environment:
+      - SCV_ADDR=ecomm-grpc:9091 
+    depends_on:
+      - ecomm-grpc
+
+  ecomm-notification:
+    networks:
+      - ecomm
+    hostname: ecomm-notification
+    platform: linux/amd64
+    image: sed_miyuki_test/ecomm:latest
+    command: "/bin/ecomm-notification"
+    env_file:
+      - ../.env
+    environment:
+      - SCV_ADDR=ecomm-grpc:9091
+    depends_on:
+      - ecomm-grpc
