@@ -167,7 +167,3 @@ There are three possible outcomes:
 * Use strong, unique passwords for the database and admin account.
 * Use a secure secret key for JWT signing.
 * Do not use development credentials in production.
-
-## License
-
-Add your preferred license information here.
